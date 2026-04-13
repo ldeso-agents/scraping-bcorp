@@ -1,0 +1,15 @@
+{
+  "name": "scraping-bcorp",
+  "version": "1.0.0",
+  "description": "Scrape the B Corp directory for certified companies",
+  "type": "module",
+  "scripts": {
+    "scrape": "tsx src/scrape.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "playwright": "^1.52.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}
