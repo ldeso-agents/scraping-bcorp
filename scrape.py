@@ -31,8 +31,8 @@ COMPANY_LINK_SELECTOR = 'a[href*="/find-a-b-corp/company/"]'
 
 def collect_company_urls(page):
     """Load the directory and paginate through all pages to collect company URLs."""
-    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=120000)
-    page.wait_for_selector(COMPANY_LINK_SELECTOR, timeout=60000)
+    page.goto(BASE_URL, wait_until="commit", timeout=60000)
+    page.wait_for_selector(COMPANY_LINK_SELECTOR, timeout=120000)
 
     all_urls = set()
     current_page = 1
@@ -43,6 +43,10 @@ def collect_company_urls(page):
             'els => [...new Set(els.map(a => a.getAttribute("href")))]',
         )
         all_urls.update(links)
+        print(
+            f"  page {current_page}: {len(all_urls)} companies collected",
+            flush=True,
+        )
 
         next_page = current_page + 1
 
@@ -92,8 +96,8 @@ def scrape_company_page(page, company_path):
         if company_path.startswith("http")
         else f"https://www.bcorporation.net{company_path}"
     )
-    page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    page.wait_for_selector("h1", timeout=15000)
+    page.goto(url, wait_until="commit", timeout=30000)
+    page.wait_for_selector("h1", timeout=30000)
 
     company_name = page.eval_on_selector("h1", "el => el.innerText.trim()")
 
@@ -191,32 +195,34 @@ def main():
             if parsed.password:
                 proxy_cfg["password"] = parsed.password
             launch_options["proxy"] = proxy_cfg
-            launch_options["args"] = ["--ignore-certificate-errors"]
+            launch_options.setdefault("args", []).append(
+                "--ignore-certificate-errors"
+            )
 
         browser = p.chromium.launch(**launch_options)
         page = browser.new_page()
 
-        print("Loading directory page...")
+        print("Loading directory page...", flush=True)
         company_urls = collect_company_urls(page)
-        print(f"Found {len(company_urls)} certified B Corps")
+        print(f"Found {len(company_urls)} certified B Corps", flush=True)
 
         if not company_urls:
-            print("ERROR: No companies found on the directory page.", file=sys.stderr)
+            print("ERROR: No companies found on the directory page.", file=sys.stderr, flush=True)
             browser.close()
             sys.exit(1)
 
         companies = []
         for i, company_path in enumerate(company_urls, 1):
             slug = company_path.strip("/").rsplit("/", 1)[-1]
-            print(f"[{i}/{len(company_urls)}] {slug}")
+            print(f"[{i}/{len(company_urls)}] {slug}", flush=True)
             try:
                 data = scrape_company_page(page, company_path)
                 if data["company_name"]:
                     companies.append({"date_added": today, **data})
             except PlaywrightTimeoutError:
-                print("  Timeout — skipping")
+                print("  Timeout — skipping", flush=True)
             except Exception as e:
-                print(f"  Error: {e}")
+                print(f"  Error: {e}", flush=True)
 
         browser.close()
 
@@ -246,7 +252,7 @@ def main():
         writer.writeheader()
         writer.writerows(companies)
 
-    print(f"\nSaved {len(companies)} companies to {OUTPUT_FILE}")
+    print(f"\nSaved {len(companies)} companies to {OUTPUT_FILE}", flush=True)
 
 
 if __name__ == "__main__":
