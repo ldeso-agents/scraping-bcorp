@@ -4,8 +4,10 @@
 
 import csv
 import datetime
+import os
 import re
 import sys
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -177,7 +179,21 @@ def main():
     today = datetime.date.today().isoformat()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        launch_options = {"headless": True}
+
+        # Forward the system proxy to Chromium when one is configured.
+        proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+        if proxy_url:
+            parsed = urlparse(proxy_url)
+            proxy_cfg = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
+            if parsed.username:
+                proxy_cfg["username"] = parsed.username
+            if parsed.password:
+                proxy_cfg["password"] = parsed.password
+            launch_options["proxy"] = proxy_cfg
+            launch_options["args"] = ["--ignore-certificate-errors"]
+
+        browser = p.chromium.launch(**launch_options)
         page = browser.new_page()
 
         print("Loading directory page...")
