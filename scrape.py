@@ -29,8 +29,8 @@ COMPANY_LINK_SELECTOR = 'a[href*="/find-a-b-corp/company/"]'
 
 def collect_company_urls(page):
     """Load the directory and paginate through all pages to collect company URLs."""
-    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_selector(COMPANY_LINK_SELECTOR, timeout=30000)
+    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=120000)
+    page.wait_for_selector(COMPANY_LINK_SELECTOR, timeout=60000)
 
     all_urls = set()
     current_page = 1
@@ -45,40 +45,34 @@ def collect_company_urls(page):
         next_page = current_page + 1
 
         # Try to click the next page number button directly.
-        btn = page.query_selector(
-            f'button:text-is("{next_page}"), a:text-is("{next_page}")'
-        )
+        btn = page.query_selector(f'button[aria-label="Go to page {next_page}"]')
         if not btn:
             # The button isn't visible yet — advance the pagination range.
-            arrow = page.query_selector(
-                'button[aria-label="Next page"], a[aria-label="Next page"], '
-                'button[aria-label="Next"], a[aria-label="Next"]'
-            )
+            arrow = page.query_selector('button[aria-label="Next"]')
             if not arrow or arrow.is_disabled():
                 break
             arrow.click()
             page.wait_for_timeout(1000)
             btn = page.query_selector(
-                f'button:text-is("{next_page}"), a:text-is("{next_page}")'
+                f'button[aria-label="Go to page {next_page}"]'
             )
             if not btn:
                 break
 
-        # Snapshot current company links so we can detect when the page updates.
-        old_links = page.evaluate(
-            """() => Array.from(document.querySelectorAll('a[href*="/find-a-b-corp/company/"]'))
-.map(a => a.href).join(",")"""
-        )
+        # Snapshot the first company link so we can detect when the page updates.
+        old_first = links[0] if links else None
 
         btn.click()
 
         # Wait until the company links change, indicating the new page loaded.
         try:
             page.wait_for_function(
-                """(old) => Array.from(document.querySelectorAll('a[href*="/find-a-b-corp/company/"]'))
-.map(a => a.href).join(",") !== old""",
-                arg=old_links,
-                timeout=10000,
+                """(oldFirst) => {
+                    const links = document.querySelectorAll('a[href*="/find-a-b-corp/company/"]');
+                    return links.length > 0 && links[0].getAttribute("href") !== oldFirst;
+                }""",
+                arg=old_first,
+                timeout=15000,
             )
         except PlaywrightTimeoutError:
             break
@@ -197,7 +191,7 @@ def main():
 
         companies = []
         for i, company_path in enumerate(company_urls, 1):
-            slug = company_path.rsplit("/", 1)[-1]
+            slug = company_path.strip("/").rsplit("/", 1)[-1]
             print(f"[{i}/{len(company_urls)}] {slug}")
             try:
                 data = scrape_company_page(page, company_path)
