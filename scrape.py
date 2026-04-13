@@ -28,23 +28,44 @@ SOCIAL_MEDIA_DOMAINS = [
 
 COMPANY_LINK_SELECTOR = 'a[href*="/find-a-b-corp/company/"]'
 
+FIELDNAMES = [
+    "date_added",
+    "company_name",
+    "company_website",
+    "hq_country",
+    "hq_city",
+    "industry",
+    "sector",
+]
+
 
 def collect_company_urls(page):
-    """Load the directory and paginate through all pages to collect company URLs."""
+    """Load the directory and paginate to collect all company URLs and names.
+
+    Returns a dict mapping each company's URL path to its name as shown on
+    the directory card (extracted from the link's aria-label attribute).
+    """
     page.goto(BASE_URL, wait_until="commit", timeout=60000)
     page.wait_for_selector(COMPANY_LINK_SELECTOR, timeout=120000)
 
-    all_urls = set()
+    directory = {}
     current_page = 1
 
     while current_page <= 500:
-        links = page.eval_on_selector_all(
+        entries = page.eval_on_selector_all(
             COMPANY_LINK_SELECTOR,
-            'els => [...new Set(els.map(a => a.getAttribute("href")))]',
+            """els => [...new Map(els.map(a => {
+                const href = a.getAttribute("href");
+                const label = a.getAttribute("aria-label") || "";
+                const name = label.replace(/^Link to /, "").replace(/ profile page$/, "");
+                return [href, name];
+            })).entries()]""",
         )
-        all_urls.update(links)
+        for path, name in entries:
+            if path not in directory:
+                directory[path] = name
         print(
-            f"  page {current_page}: {len(all_urls)} companies collected",
+            f"  page {current_page}: {len(directory)} companies collected",
             flush=True,
         )
 
@@ -66,7 +87,7 @@ def collect_company_urls(page):
                 break
 
         # Snapshot the first company link so we can detect when the page updates.
-        old_first = links[0] if links else None
+        old_first = entries[0][0] if entries else None
 
         btn.click()
 
@@ -86,7 +107,7 @@ def collect_company_urls(page):
         page.wait_for_timeout(500)
         current_page = next_page
 
-    return sorted(all_urls)
+    return directory
 
 
 def scrape_company_page(page, company_path):
@@ -167,20 +188,23 @@ def scrape_company_page(page, company_path):
     }
 
 
-def load_existing_dates(filepath):
-    """Load existing CSV to preserve original date_added values."""
-    dates = {}
+def load_existing_csv(filepath):
+    """Load existing CSV and return a dict mapping company_name to its row."""
+    rows = {}
     try:
         with open(filepath, newline="") as f:
             for row in csv.DictReader(f):
-                dates[row["company_name"]] = row["date_added"]
+                rows[row["company_name"]] = row
     except FileNotFoundError:
         pass
-    return dates
+    return rows
 
 
 def main():
     today = datetime.date.today().isoformat()
+
+    # Load existing data so we can skip companies we already have.
+    existing = load_existing_csv(OUTPUT_FILE)
 
     with sync_playwright() as p:
         launch_options = {"headless": True}
@@ -202,23 +226,40 @@ def main():
         browser = p.chromium.launch(**launch_options)
         page = browser.new_page()
 
+        # Phase 1: Collect every company URL and card-name from the directory.
         print("Loading directory page...", flush=True)
-        company_urls = collect_company_urls(page)
-        print(f"Found {len(company_urls)} certified B Corps", flush=True)
+        directory = collect_company_urls(page)
+        print(f"Found {len(directory)} certified B Corps", flush=True)
 
-        if not company_urls:
-            print("ERROR: No companies found on the directory page.", file=sys.stderr, flush=True)
+        if not directory:
+            print(
+                "ERROR: No companies found on the directory page.",
+                file=sys.stderr,
+                flush=True,
+            )
             browser.close()
             sys.exit(1)
 
-        companies = []
-        for i, company_path in enumerate(company_urls, 1):
-            slug = company_path.strip("/").rsplit("/", 1)[-1]
-            print(f"[{i}/{len(company_urls)}] {slug}", flush=True)
+        # Phase 2: Determine which companies are new.
+        directory_names = set(directory.values())
+        new_entries = [
+            (path, name)
+            for path, name in sorted(directory.items())
+            if name not in existing
+        ]
+        print(f"  {len(new_entries)} new companies to scrape", flush=True)
+
+        # Phase 3: Scrape detail pages only for new companies.
+        for i, (path, name) in enumerate(new_entries, 1):
+            slug = path.strip("/").rsplit("/", 1)[-1]
+            print(f"[{i}/{len(new_entries)}] {slug}", flush=True)
             try:
-                data = scrape_company_page(page, company_path)
+                data = scrape_company_page(page, path)
                 if data["company_name"]:
-                    companies.append({"date_added": today, **data})
+                    existing[data["company_name"]] = {
+                        "date_added": today,
+                        **data,
+                    }
             except PlaywrightTimeoutError:
                 print("  Timeout — skipping", flush=True)
             except Exception as e:
@@ -226,29 +267,14 @@ def main():
 
         browser.close()
 
+    # Phase 4: Write the CSV with only companies still in the directory.
+    companies = [
+        existing[name] for name in sorted(directory_names) if name in existing
+    ]
     companies.sort(key=lambda c: c["company_name"].lower())
 
-    # Preserve the original date_added for companies already in the CSV so the
-    # field reflects when the company was *first* recorded, not the last time
-    # the scraper ran.
-    existing_dates = load_existing_dates(OUTPUT_FILE)
-    for company in companies:
-        original = existing_dates.get(company["company_name"])
-        if original:
-            company["date_added"] = original
-
-    fieldnames = [
-        "date_added",
-        "company_name",
-        "company_website",
-        "hq_country",
-        "hq_city",
-        "industry",
-        "sector",
-    ]
-
     with open(OUTPUT_FILE, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         writer.writeheader()
         writer.writerows(companies)
 
