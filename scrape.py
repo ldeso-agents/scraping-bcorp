@@ -135,30 +135,21 @@ def scrape_company_page(page, company_path):
     }"""
     )
 
-    # Parse headquarters (e.g. "California, United States").
-    hq_country = ""
-    hq_city = ""
-    hq_match = re.search(r"Headquarters?\s*\n\s*(.+?)(?:\n|$)", content)
-    if hq_match:
-        hq = hq_match.group(1).strip()
+    # Parse structured fields from label/value pairs.
+    def field(label):
+        m = re.search(rf"{label}\s*\n\s*(.+?)(?:\n|$)", content)
+        return m.group(1).strip() if m else ""
+
+    hq = field("Headquarters?")
+    hq_country, hq_city = "", ""
+    if hq:
         parts = [p.strip() for p in hq.split(",")]
         if len(parts) >= 2:
-            hq_country = parts[-1]
-            hq_city = ", ".join(parts[:-1])
+            hq_country, hq_city = parts[-1], ", ".join(parts[:-1])
         else:
             hq_country = hq
-
-    # Parse industry.
-    industry = ""
-    ind_match = re.search(r"Industry\s*\n\s*(.+?)(?:\n|$)", content)
-    if ind_match:
-        industry = ind_match.group(1).strip()
-
-    # Parse sector.
-    sector = ""
-    sec_match = re.search(r"Sector\s*\n\s*(.+?)(?:\n|$)", content)
-    if sec_match:
-        sector = sec_match.group(1).strip()
+    industry = field("Industry")
+    sector = field("Sector")
 
     # Extract the company website.  The link text usually looks like a bare
     # domain (e.g. "patagonia.com"), excluding B Corp and social-media URLs.
@@ -251,8 +242,7 @@ def main():
 
         # Phase 3: Scrape detail pages only for new companies.
         for i, (path, name) in enumerate(new_entries, 1):
-            slug = path.strip("/").rsplit("/", 1)[-1]
-            print(f"[{i}/{len(new_entries)}] {slug}", flush=True)
+            print(f"[{i}/{len(new_entries)}] {name}", flush=True)
             try:
                 data = scrape_company_page(page, path)
                 if data["company_name"]:
@@ -268,9 +258,7 @@ def main():
         browser.close()
 
     # Phase 4: Write the CSV with only companies still in the directory.
-    companies = [
-        existing[name] for name in sorted(directory_names) if name in existing
-    ]
+    companies = [existing[name] for name in directory_names if name in existing]
     companies.sort(key=lambda c: c["company_name"].lower())
 
     with open(OUTPUT_FILE, "w", newline="") as f:
