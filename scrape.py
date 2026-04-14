@@ -4,10 +4,8 @@
 
 import csv
 import datetime
-import os
 import re
 import sys
-from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -198,23 +196,7 @@ def main():
     existing = load_existing_csv(OUTPUT_FILE)
 
     with sync_playwright() as p:
-        launch_options = {"headless": True}
-
-        # Forward the system proxy to Chromium when one is configured.
-        proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-        if proxy_url:
-            parsed = urlparse(proxy_url)
-            proxy_cfg = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
-            if parsed.username:
-                proxy_cfg["username"] = parsed.username
-            if parsed.password:
-                proxy_cfg["password"] = parsed.password
-            launch_options["proxy"] = proxy_cfg
-            launch_options.setdefault("args", []).append(
-                "--ignore-certificate-errors"
-            )
-
-        browser = p.chromium.launch(**launch_options)
+        browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
         # Phase 1: Collect every company URL and card-name from the directory.
