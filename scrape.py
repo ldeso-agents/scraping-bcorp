@@ -36,6 +36,7 @@ FIELDNAMES = [
     "hq_city",
     "industry",
     "sector",
+    "date_removed",
 ]
 
 
@@ -259,6 +260,7 @@ def main():
                     existing[data["company_name"]] = {
                         "date_added": today,
                         **data,
+                        "date_removed": "",
                     }
             except PlaywrightTimeoutError:
                 print("  Timeout — skipping", flush=True)
@@ -267,10 +269,17 @@ def main():
 
         browser.close()
 
-    # Phase 4: Write the CSV with only companies still in the directory.
-    companies = [
-        existing[name] for name in sorted(directory_names) if name in existing
-    ]
+    # Phase 4: Write every company we've ever seen. Companies still in the
+    # directory have an empty date_removed; companies that have disappeared
+    # keep their previously stamped date_removed, or get stamped with today's
+    # date on the first run where they go missing.
+    companies = []
+    for name, row in existing.items():
+        if name in directory_names:
+            row["date_removed"] = ""
+        elif not row.get("date_removed"):
+            row["date_removed"] = today
+        companies.append(row)
     companies.sort(key=lambda c: c["company_name"].lower())
 
     with open(OUTPUT_FILE, "w", newline="") as f:
